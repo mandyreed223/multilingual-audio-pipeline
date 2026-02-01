@@ -248,3 +248,106 @@ def process_one_audio_file(
     voice_map = get_voice_map()
 
     for lang in target_languages:
+        # Translate transcript
+        translated_text = translate_text(
+            translate_client=translate_client,
+            text=transcript_text,
+            source_lang="en",
+            target_lang=lang,
+        )
+
+        # Upload translation text
+        translation_key = build_s3_key(env_prefix, "translations", f"{base_name}_{lang}.txt")
+        put_text_to_s3(s3_client, bucket, translation_key, translated_text)
+
+        # Determine voice for this language
+        voice_id = voice_map.get(lang)
+        if not voice_id:
+            raise ValueError(
+                f"No Polly voice mapping found for language '{lang}'. "
+                f"Add it to get_voice_map() or choose a supported voice for your region."
+            )
+
+        # Synthesize translated speech
+        audio_bytes = synthesize_speech(
+            polly_client=polly_client,
+            text=translated_text,
+            voice_id=voice_id,
+            engine_preference=polly_engine,
+            output_format="mp3",
+        )
+
+        # Upload synthesized audio
+        audio_output_key = build_s3_key(env_prefix, "audio_outputs", f"{base_name}_{lang}.mp3")
+        s3_client.put_object(
+            Bucket=bucket,
+            Key=audio_output_key,
+            Body=audio_bytes,
+            ContentType="audio/mpeg",
+        )
+
+    # Print success summary for logs
+    print(f"✅ Processed: {audio_path.name}")
+    print(f"   - Input: s3://{bucket}/{input_key}")
+    print(f"   - Transcript: s3://{bucket}/{transcript_key}")
+    for lang in target_languages:
+        print(f"   - Translation ({lang}): s3://{bucket}/{env_prefix}/translations/{base_name}_{lang}.txt")
+        print(f"   - Audio ({lang}): s3://{bucket}/{env_prefix}/audio_outputs/{base_name}_{lang}.mp3")
+
+
+def main() -> None:
+    # Load configuration
+    aws_region = get_env("AWS_REGION")
+    s3_bucket = get_env("S3_BUCKET")
+
+    if not aws_region:
+        raise ValueError("Missing required env var: AWS_REGION")
+
+    if not s3_bucket:
+        raise ValueError("Missing required env var: S3_BUCKET")
+
+    env_prefix = get_env("ENV_PREFIX", "beta")
+    input_dir = get_env("INPUT_DIR", "audio_inputs")
+    target_languages = split_languages(get_env("TARGET_LANGUAGES", "es,fr"))
+    transcribe_language = get_env("TRANSCRIBE_LANGUAGE", "en-US")
+    polly_engine = get_env("POLLY_ENGINE", "neural")
+
+    # Create AWS clients
+    s3_client = boto3.client("s3", region_name=aws_region)
+    transcribe_client = boto3.client("transcribe", region_name=aws_region)
+    translate_client = boto3.client("translate", region_name=aws_region)
+    polly_client = boto3.client("polly", region_name=aws_region)
+
+    # Locate audio input files
+    audio_folder = Path(input_dir)
+    if not audio_folder.exists():
+        raise FileNotFoundError(f"Input directory not found: {audio_folder.resolve()}")
+
+    mp3_files = sorted(audio_folder.glob("*.mp3"))
+    if not mp3_files:
+        print(f"⚠️ No .mp3 files found in {audio_folder.resolve()}. Nothing to do.")
+        return
+
+    # Process each file
+    print(f"🔎 Found {len(mp3_files)} .mp3 file(s) in {audio_folder.resolve()}")
+    print(f"📦 Upload destination: s3://{s3_bucket}/{env_prefix}/")
+    print(f"🌍 Target languages: {', '.join(target_languages)}")
+
+    for audio_path in mp3_files:
+        process_one_audio_file(
+            s3_client=s3_client,
+            transcribe_client=transcribe_client,
+            translate_client=translate_client,
+            polly_client=polly_client,
+            bucket=s3_bucket,
+            env_prefix=env_prefix,
+            audio_path=audio_path,
+            transcribe_language=transcribe_language,
+            target_languages=target_languages,
+            polly_engine=polly_engine,
+        )
+
+
+if __name__ == "__main__":
+    main()
+
