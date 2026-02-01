@@ -1,0 +1,5 @@
+name: Audio Pipeline (Beta)
+
+on:
+  pull_request:
+    branches: [main]
