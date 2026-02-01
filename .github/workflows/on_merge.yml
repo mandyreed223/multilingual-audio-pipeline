@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-    # Only run when audio inputs, script, requirements, or workflows change
     paths:
       - "audio_inputs/**"
       - "scripts/**"
@@ -16,38 +15,35 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Checkout the repo contents
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Set up Python for the runner
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      # Install Python dependencies
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # Run the pipeline script and point uploads to the prod prefix
       - name: Run multilingual audio pipeline (prod)
         env:
-          # AWS region (GitHub Secret)
           AWS_REGION: ${{ secrets.AWS_REGION }}
-          # S3 bucket name (GitHub Secret)
           S3_BUCKET: ${{ secrets.S3_BUCKET }}
-          # Environment prefix used by the script
           ENV_PREFIX: prod
-          # Folder where mp3 files live
           INPUT_DIR: audio_inputs
-          # Target languages (adjust anytime)
           TARGET_LANGUAGES: es,fr
-          # Transcribe input language
           TRANSCRIBE_LANGUAGE: en-US
-          # Polly engine preference
           POLLY_ENGINE: neural
         run: |
           python scripts/process_audio.py
+
